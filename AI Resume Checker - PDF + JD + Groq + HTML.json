@@ -1,0 +1,249 @@
+{
+  "name": "AI Resume Checker - PDF + JD + Groq + HTML",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "AI Resume Checker",
+        "formDescription": "Upload your resume PDF and paste the Job Description. The AI will compare your resume against the JD and generate a detailed ATS report.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Resume PDF",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".pdf",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Job Description",
+              "fieldType": "textarea",
+              "placeholder": "Paste the complete Job Description here...",
+              "requiredField": true
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "abe0fb23-0f91-4d29-a24e-8f001a5c0681",
+      "name": "Resume Checker Form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        1520,
+        128
+      ],
+      "webhookId": "67e6afe2-dc1b-440b-a4a8-96b449e67b40"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get all incoming form data\nconst input = $input.first();\n\nconst json = input.json || {};\nconst binary = input.binary || {};\n\n// --------------------------------------------------\n// 1. Find uploaded resume automatically\n// --------------------------------------------------\n\nconst binaryKeys = Object.keys(binary);\n\nif (binaryKeys.length === 0) {\n  throw new Error(\n    'No resume file was received. Please upload your PDF resume and submit the form again.'\n  );\n}\n\nlet sourceKey = binaryKeys[0];\nlet uploadedFile = binary[sourceKey];\n\nif (!uploadedFile) {\n  throw new Error('The uploaded resume binary could not be found.');\n}\n\nconst fileName = uploadedFile.fileName || 'resume.pdf';\nconst mimeType = uploadedFile.mimeType || '';\n\nif (\n  mimeType &&\n  mimeType !== 'application/pdf' &&\n  !fileName.toLowerCase().endsWith('.pdf')\n) {\n  throw new Error(\n    'Please upload a PDF resume. Received: ' + mimeType\n  );\n}\n\n// --------------------------------------------------\n// 2. Find Job Description automatically\n// --------------------------------------------------\n\nlet jobDescription = '';\n\n// First try common field names\nconst possibleJDFields = [\n  'job_description',\n  'jobDescription',\n  'Job Description',\n  'Job_Description',\n  'jd',\n  'JD',\n  'description',\n  'text'\n];\n\nfor (const field of possibleJDFields) {\n  if (\n    json[field] !== undefined &&\n    json[field] !== null &&\n    String(json[field]).trim()\n  ) {\n    jobDescription = String(json[field]).trim();\n    break;\n  }\n}\n\n// --------------------------------------------------\n// 3. If not found, inspect all JSON fields\n// --------------------------------------------------\n\nif (!jobDescription) {\n  for (const [key, value] of Object.entries(json)) {\n\n    if (typeof value !== 'string') {\n      continue;\n    }\n\n    const valueTrimmed = value.trim();\n\n    if (!valueTrimmed) {\n      continue;\n    }\n\n    // Ignore obvious form/system fields\n    const ignoredFields = [\n      'formmode',\n      'submittedAt',\n      'timestamp',\n      'resume',\n      'file'\n    ];\n\n    if (ignoredFields.includes(key.toLowerCase())) {\n      continue;\n    }\n\n    // A JD is usually a reasonably long text field.\n    // This prevents small metadata fields being selected.\n    if (valueTrimmed.length > 100) {\n      jobDescription = valueTrimmed;\n      break;\n    }\n  }\n}\n\n// --------------------------------------------------\n// 4. Still not found -> show available fields\n// --------------------------------------------------\n\nif (!jobDescription) {\n\n  const availableFields = Object.keys(json).join(', ');\n\n  throw new Error(\n    'Job Description was not detected. ' +\n    'Available form fields: [' +\n    availableFields +\n    ']. ' +\n    'Please check the Job Description field name in the Form Trigger.'\n  );\n}\n\n// --------------------------------------------------\n// 5. Return normalized data\n// --------------------------------------------------\n\nreturn [\n  {\n    json: {\n      job_description: jobDescription,\n      resume_file_name: fileName,\n      original_binary_field: sourceKey\n    },\n    binary: {\n      data: uploadedFile\n    }\n  }\n];"
+      },
+      "id": "12923c0b-70af-4f73-894f-b36f3dd5e551",
+      "name": "Normalize Uploaded Resume",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "options": {}
+      },
+      "id": "59bdca6f-8f4d-4ef5-a9d1-daa89357842f",
+      "name": "Extract Resume PDF",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const resumeText = $json.text || '';\nconst previous = $('Normalize Uploaded Resume').first().json;\n\nif (!resumeText.trim()) {\n  throw new Error('The PDF was received, but no readable text could be extracted. Please upload a text-based PDF resume.');\n}\n\nif (!previous.job_description || !previous.job_description.trim()) {\n  throw new Error('Job Description was not received.');\n}\n\nreturn [\n  {\n    json: {\n      resume_text: resumeText.trim(),\n      job_description: previous.job_description.trim(),\n      resume_file_name: previous.resume_file_name\n    }\n  }\n];"
+      },
+      "id": "1c2ebc88-fc13-4cea-ba61-41d5b59bc9c7",
+      "name": "Prepare Resume and JD",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer Groq-API-Key-Here"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ model: 'qwen/qwen3.8-27b', temperature: 0.1, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: 'You are an expert ATS resume evaluator, technical recruiter, hiring manager, and career coach. Compare a candidate resume against a job description. Be accurate and objective. Never invent candidate information. Only use information explicitly present in the resume. Return only valid JSON.' }, { role: 'user', content: `Analyze the candidate resume against the Job Description below.\\n\\n===== RESUME =====\\n${$json.resume_text}\\n\\n===== JOB DESCRIPTION =====\\n${$json.job_description}\\n\\nReturn ONLY valid JSON using this exact structure:\\n{\\n  \"overall_match_score\": 0,\\n  \"ats_score\": 0,\\n  \"skills_match_score\": 0,\\n  \"experience_match_score\": 0,\\n  \"education_match_score\": 0,\\n  \"keyword_match_score\": 0,\\n  \"recommendation\": \"Strong Match | Moderate Match | Weak Match\",\\n  \"candidate_summary\": \"\",\\n  \"matched_skills\": [],\\n  \"missing_skills\": [],\\n  \"important_jd_keywords\": [],\\n  \"missing_resume_keywords\": [],\\n  \"required_skills\": [],\\n  \"preferred_skills\": [],\\n  \"technical_skill_analysis\": [\\n    {\\n      \"skill\": \"\",\\n      \"importance\": \"Required | Preferred | Optional\",\\n      \"found_in_resume\": true,\\n      \"evidence\": \"\"\\n    }\\n  ],\\n  \"experience_analysis\": {\\n    \"required_experience\": \"\",\\n    \"candidate_experience\": \"\",\\n    \"analysis\": \"\"\\n  },\\n  \"education_analysis\": {\\n    \"job_requirement\": \"\",\\n    \"candidate_education\": \"\",\\n    \"analysis\": \"\"\\n  },\\n  \"ats_issues\": [],\\n  \"resume_strengths\": [],\\n  \"resume_weaknesses\": [],\\n  \"recommended_changes\": [\\n    {\\n      \"priority\": \"High | Medium | Low\",\\n      \"section\": \"\",\\n      \"change\": \"\",\\n      \"reason\": \"\"\\n    }\\n  ],\\n  \"recommended_headline\": \"\",\\n  \"recommended_summary\": \"\",\\n  \"interview_focus_areas\": [],\\n  \"final_verdict\": \"\"\\n}\\n\\nRules:\\n1. Every score must be an integer from 0 to 100.\\n2. Never fabricate experience, skills, education, certifications, projects, employers, or technologies.\\n3. A missing skill means it is required or useful for the JD but is not clearly present in the resume.\\n4. Do not recommend falsely adding missing skills.\\n5. Identify important keywords from the JD.\\n6. Identify keywords that are relevant to the JD but absent from the resume.\\n7. Analyze ATS readability, keyword relevance, structure, and clarity.\\n8. Keep the recommended headline and summary truthful to the candidate resume.\\n9. Give practical recommendations.\\n10. Return JSON only.` } ] }) }}",
+        "options": {}
+      },
+      "id": "4ce338a0-103d-4636-8667-ab0f087979e6",
+      "name": "Groq Resume Analyzer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2528,
+        128
+      ],
+      "options": {
+        "timeout": 120000
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $json;\n\nlet content = response.choices?.[0]?.message?.content;\n\nif (!content) {\n  throw new Error('Groq returned an empty response.');\n}\n\ncontent = content.trim();\n\nif (content.startsWith('```')) {\n  content = content.replace(/^```json\\\\s*/i, '').replace(/^```\\\\s*/i, '').replace(/\\\\s*```$/i, '').trim();\n}\n\nlet analysis;\n\ntry {\n  analysis = JSON.parse(content);\n} catch (error) {\n  throw new Error('Groq returned invalid JSON. Raw response: ' + content);\n}\n\nconst original = $('Prepare Resume and JD').first().json;\n\nreturn [\n  {\n    json: {\n      success: true,\n      resume_file_name: original.resume_file_name,\n      analysis: analysis\n    }\n  }\n];"
+      },
+      "id": "c883d26e-0ca7-4ace-9875-136248a687be",
+      "name": "Parse Groq JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2768,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const analysis = $json.analysis || {};\nconst resumeFile = $json.resume_file_name || 'resume.pdf';\n\nfunction esc(value) {\n  if (value === null || value === undefined) return '';\n  return String(value)\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;')\n    .replace(/\"/g, '&quot;')\n    .replace(/'/g, '&#039;');\n}\n\nfunction arr(value) {\n  return Array.isArray(value) ? value : [];\n}\n\nfunction list(value) {\n  const items = arr(value);\n  if (!items.length) return '<p class=\"empty\">None identified.</p>';\n  return '<ul>' + items.map(x => '<li>' + esc(typeof x === 'string' ? x : JSON.stringify(x)) + '</li>').join('') + '</ul>';\n}\n\nfunction score(value) {\n  const n = Number(value || 0);\n  return Math.max(0, Math.min(100, Math.round(n)));\n}\n\nfunction scoreClass(value) {\n  const n = score(value);\n  if (n >= 80) return 'good';\n  if (n >= 60) return 'medium';\n  return 'low';\n}\n\nconst technicalRows = arr(analysis.technical_skill_analysis).map(x => `\n<tr>\n<td>${esc(x.skill)}</td>\n<td>${esc(x.importance)}</td>\n<td class=\"${x.found_in_resume ? 'yes' : 'no'}\">${x.found_in_resume ? 'Yes' : 'No'}</td>\n<td>${esc(x.evidence)}</td>\n</tr>`).join('');\n\nconst changeBlocks = arr(analysis.recommended_changes).map(x => `\n<div class=\"recommendation\">\n<div class=\"priority\">${esc(x.priority)}</div>\n<h4>${esc(x.section)}</h4>\n<p>${esc(x.change)}</p>\n<p><strong>Why:</strong> ${esc(x.reason)}</p>\n</div>`).join('');\n\nconst html = `<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n<title>AI Resume Analysis Report</title>\n<style>\n*{box-sizing:border-box}\nbody{margin:0;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;color:#202124;line-height:1.6}\n.container{max-width:1150px;margin:0 auto;padding:30px 20px}\n.header{background:#ffffff;border-radius:16px;padding:32px;margin-bottom:20px;box-shadow:0 3px 15px rgba(0,0,0,.08)}\n.header h1{margin:0 0 8px;font-size:32px}\n.filename{color:#666;margin-bottom:20px}\n.verdict{display:inline-block;padding:10px 18px;border-radius:999px;background:#eef3ff;font-weight:bold}\n.scores{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:20px}\n.score-card{background:#fff;border-radius:14px;padding:22px;text-align:center;box-shadow:0 3px 12px rgba(0,0,0,.06)}\n.score-card .label{font-size:14px;color:#666;margin-bottom:8px}\n.score-card .number{font-size:34px;font-weight:700}\n.good{color:#16803c}.medium{color:#a56a00}.low{color:#c62828}\n.section{background:#fff;border-radius:14px;padding:28px;margin-bottom:18px;box-shadow:0 3px 12px rgba(0,0,0,.05)}\n.section h2{margin-top:0;border-bottom:1px solid #eee;padding-bottom:10px}\n.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}\n@media(max-width:700px){.grid{grid-template-columns:1fr}}\nul{padding-left:22px}.empty{color:#777;font-style:italic}\n.tag{display:inline-block;background:#eef2f5;border-radius:20px;padding:6px 11px;margin:4px;font-size:13px}\ntable{width:100%;border-collapse:collapse;margin-top:15px}th,td{border:1px solid #ddd;padding:11px;text-align:left}th{background:#f3f4f6}.yes{font-weight:bold}.no{font-weight:bold}\n.recommendation{border-left:4px solid #555;background:#f8f9fa;padding:15px;margin:12px 0;border-radius:4px}.priority{font-size:12px;font-weight:bold;text-transform:uppercase;margin-bottom:5px}\n.summary-box{background:#f7f9fc;padding:20px;border-radius:10px}\n.footer{text-align:center;color:#777;font-size:12px;padding:20px}\n</style>\n</head>\n<body>\n<div class=\"container\">\n\n<div class=\"header\">\n<h1>AI Resume Analysis</h1>\n<div class=\"filename\">Resume analyzed: <strong>${esc(resumeFile)}</strong></div>\n<div class=\"verdict\">${esc(analysis.recommendation || 'Analysis Complete')}</div>\n</div>\n\n<div class=\"scores\">\n<div class=\"score-card\"><div class=\"label\">Overall Match</div><div class=\"number ${scoreClass(analysis.overall_match_score)}\">${score(analysis.overall_match_score)}%</div></div>\n<div class=\"score-card\"><div class=\"label\">ATS Score</div><div class=\"number ${scoreClass(analysis.ats_score)}\">${score(analysis.ats_score)}%</div></div>\n<div class=\"score-card\"><div class=\"label\">Skills Match</div><div class=\"number ${scoreClass(analysis.skills_match_score)}\">${score(analysis.skills_match_score)}%</div></div>\n<div class=\"score-card\"><div class=\"label\">Experience Match</div><div class=\"number ${scoreClass(analysis.experience_match_score)}\">${score(analysis.experience_match_score)}%</div></div>\n<div class=\"score-card\"><div class=\"label\">Education Match</div><div class=\"number ${scoreClass(analysis.education_match_score)}\">${score(analysis.education_match_score)}%</div></div>\n<div class=\"score-card\"><div class=\"label\">Keyword Match</div><div class=\"number ${scoreClass(analysis.keyword_match_score)}\">${score(analysis.keyword_match_score)}%</div></div>\n</div>\n\n<div class=\"section\">\n<h2>Candidate Summary</h2>\n<p>${esc(analysis.candidate_summary)}</p>\n</div>\n\n<div class=\"grid\">\n<div class=\"section\">\n<h2>Matched Skills</h2>\n${list(analysis.matched_skills)}\n</div>\n\n<div class=\"section\">\n<h2>Missing Skills</h2>\n${list(analysis.missing_skills)}\n</div>\n</div>\n\n<div class=\"section\">\n<h2>Important JD Keywords</h2>\n${list(analysis.important_jd_keywords)}\n</div>\n\n<div class=\"section\">\n<h2>Keywords Missing From Resume</h2>\n${list(analysis.missing_resume_keywords)}\n</div>\n\n<div class=\"grid\">\n<div class=\"section\">\n<h2>Required Skills</h2>\n${list(analysis.required_skills)}\n</div>\n\n<div class=\"section\">\n<h2>Preferred Skills</h2>\n${list(analysis.preferred_skills)}\n</div>\n</div>\n\n<div class=\"section\">\n<h2>Technical Skill Analysis</h2>\n<table>\n<thead><tr><th>Skill</th><th>Importance</th><th>Found</th><th>Resume Evidence</th></tr></thead>\n<tbody>${technicalRows}</tbody>\n</table>\n</div>\n\n<div class=\"grid\">\n<div class=\"section\">\n<h2>Experience Analysis</h2>\n<p><strong>JD Requirement:</strong><br>${esc(analysis.experience_analysis?.required_experience)}</p>\n<p><strong>Candidate Experience:</strong><br>${esc(analysis.experience_analysis?.candidate_experience)}</p>\n<p>${esc(analysis.experience_analysis?.analysis)}</p>\n</div>\n\n<div class=\"section\">\n<h2>Education Analysis</h2>\n<p><strong>JD Requirement:</strong><br>${esc(analysis.education_analysis?.job_requirement)}</p>\n<p><strong>Candidate Education:</strong><br>${esc(analysis.education_analysis?.candidate_education)}</p>\n<p>${esc(analysis.education_analysis?.analysis)}</p>\n</div>\n</div>\n\n<div class=\"grid\">\n<div class=\"section\">\n<h2>Resume Strengths</h2>\n${list(analysis.resume_strengths)}\n</div>\n\n<div class=\"section\">\n<h2>Resume Weaknesses</h2>\n${list(analysis.resume_weaknesses)}\n</div>\n</div>\n\n<div class=\"section\">\n<h2>ATS Issues</h2>\n${list(analysis.ats_issues)}\n</div>\n\n<div class=\"section\">\n<h2>Recommended Changes</h2>\n${changeBlocks || '<p class=\"empty\">No changes identified.</p>'}\n</div>\n\n<div class=\"section\">\n<h2>Recommended Resume Headline</h2>\n<div class=\"summary-box\">${esc(analysis.recommended_headline)}</div>\n</div>\n\n<div class=\"section\">\n<h2>Recommended Professional Summary</h2>\n<div class=\"summary-box\">${esc(analysis.recommended_summary)}</div>\n</div>\n\n<div class=\"section\">\n<h2>Interview Focus Areas</h2>\n${list(analysis.interview_focus_areas)}\n</div>\n\n<div class=\"section\">\n<h2>Final Verdict</h2>\n<p>${esc(analysis.final_verdict)}</p>\n</div>\n\n<div class=\"footer\">Generated automatically by n8n + Groq AI</div>\n\n</div>\n</body>\n</html>`;\n\nreturn [\n  {\n    json: {\n      html_report: html,\n      analysis: analysis,\n      resume_file_name: resumeFile\n    }\n  }\n];"
+      },
+      "id": "93373f87-c1f8-4aea-8fe7-c52953dcb22e",
+      "name": "Generate HTML Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3008,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "completionTitle": "Resume Analysis Complete",
+        "completionMessage": "={{ $json.html_report }}",
+        "options": {}
+      },
+      "id": "022bf7b1-0b3c-4b51-9070-36d6b3eee439",
+      "name": "Show HTML Report",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        3248,
+        128
+      ],
+      "webhookId": "3fddc4eb-962a-41d0-a95f-0b5f24fd195b"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Resume Checker Form": {
+      "main": [
+        [
+          {
+            "node": "Normalize Uploaded Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Uploaded Resume": {
+      "main": [
+        [
+          {
+            "node": "Extract Resume PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Resume PDF": {
+      "main": [
+        [
+          {
+            "node": "Prepare Resume and JD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Resume and JD": {
+      "main": [
+        [
+          {
+            "node": "Groq Resume Analyzer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Resume Analyzer": {
+      "main": [
+        [
+          {
+            "node": "Parse Groq JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Groq JSON": {
+      "main": [
+        [
+          {
+            "node": "Generate HTML Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate HTML Report": {
+      "main": [
+        [
+          {
+            "node": "Show HTML Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "1dfaa04c-c05a-4f8e-bb00-1cad5f08697d",
+  "meta": {
+    "instanceId": "36f9475c9c35aa0c57e03f49fbdf91b4bb1ec1df03d44db80a4d7bec72bb030e"
+  },
+  "nodeGroups": [],
+  "id": "ku8CpMVRqapTb7B3",
+  "tags": []
+}
